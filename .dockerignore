@@ -1,0 +1,17 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.local
+.env.*
+!.env.example
+venv/
+.venv/
+queuestorm-investigator/
+.claude/
+*.md
+!README.md
+scratchpad/
+.pytest_cache/

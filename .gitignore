@@ -1,0 +1,31 @@
+# Secrets — never commit. Keep only .env.example.
+.env
+.env.local
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+venv/
+.venv/
+
+# OS / editor
+.DS_Store
+.claude/
+
+# Nested leftover repo (empty scaffold)
+queuestorm-investigator/
+
+# Claude
+.claude/
+
+# Local env
+.env.local
+
+# Nested repository
+queuestorm-investigator/
