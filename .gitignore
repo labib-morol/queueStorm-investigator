@@ -23,7 +23,7 @@ queuestorm-investigator/
 
 # Claude
 .claude/
-
+.puku/
 # Local env
 .env.local
 
