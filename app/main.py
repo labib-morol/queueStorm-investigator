@@ -102,6 +102,69 @@ class TicketResponse(BaseModel):
     reason_codes: Optional[List[str]] = None
 
 
+# Example request shown in the Swagger UI body editor (so reviewers can click
+# "Try it out" → "Execute" without hand-writing JSON).
+ANALYZE_REQUEST_EXAMPLE: Dict[str, Any] = {
+    "ticket_id": "TKT-001",
+    "complaint": "I sent 5000 taka to a wrong number around 2pm today, please help me get it back",
+    "language": "en",
+    "channel": "in_app_chat",
+    "user_type": "customer",
+    "campaign_context": "boishakh_bonanza_day_1",
+    "transaction_history": [
+        {
+            "transaction_id": "TXN-9101",
+            "timestamp": "2026-04-14T14:08:22Z",
+            "type": "transfer",
+            "amount": 5000,
+            "counterparty": "+8801719876543",
+            "status": "completed",
+        }
+    ],
+}
+
+# OpenAPI request-body definition. We parse the body manually in the handler
+# (to control 400 vs 422), so we attach the schema/example via openapi_extra
+# instead of a typed body parameter.
+ANALYZE_OPENAPI_EXTRA: Dict[str, Any] = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "required": ["ticket_id", "complaint"],
+                    "properties": {
+                        "ticket_id": {"type": "string"},
+                        "complaint": {"type": "string"},
+                        "language": {"type": "string", "enum": ["en", "bn", "mixed"]},
+                        "channel": {"type": "string"},
+                        "user_type": {"type": "string"},
+                        "campaign_context": {"type": "string"},
+                        "transaction_history": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "transaction_id": {"type": "string"},
+                                    "timestamp": {"type": "string"},
+                                    "type": {"type": "string"},
+                                    "amount": {"type": "number"},
+                                    "counterparty": {"type": "string"},
+                                    "status": {"type": "string"},
+                                },
+                            },
+                        },
+                        "metadata": {"type": "object"},
+                    },
+                },
+                "example": ANALYZE_REQUEST_EXAMPLE,
+            }
+        },
+    }
+}
+
+
 # ---------------------------------------------------------------------------
 # Error handlers — never leak stack traces, always clean JSON.
 # ---------------------------------------------------------------------------
@@ -147,7 +210,7 @@ def health() -> Dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/analyze-ticket", response_model=TicketResponse)
+@app.post("/analyze-ticket", response_model=TicketResponse, openapi_extra=ANALYZE_OPENAPI_EXTRA)
 async def analyze_ticket(request: Request) -> JSONResponse:
     """
     Analyze a support ticket. We parse the body manually so we can return the
