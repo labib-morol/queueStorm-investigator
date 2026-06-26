@@ -152,6 +152,22 @@ PHISHING_SAFE_REPLY: str = (
     "Reference: {ticket_id}."
 )
 
+# Bangla fallbacks (used when the complaint is in Bangla and a reply must be replaced).
+SAFE_FALLBACK_REPLY_BN: str = (
+    "আপনার অভিযোগটি আমরা পেয়েছি এবং আমাদের টিম বিষয়টি যাচাই করে দেখবে। যেকোনো প্রযোজ্য "
+    "পরিমাণ অফিসিয়াল চ্যানেলের মাধ্যমে প্রক্রিয়া করা হবে। অনুগ্রহ করে কারো সাথে আপনার পিন "
+    "বা ওটিপি শেয়ার করবেন না। রেফারেন্স: {ticket_id}।"
+)
+PHISHING_SAFE_REPLY_BN: str = (
+    "আপনার অভিযোগটি আমরা জরুরি ভিত্তিতে আমাদের ফ্রড ও রিস্ক টিমের কাছে পাঠিয়েছি। অনুগ্রহ "
+    "করে কারো সাথে আপনার পিন, ওটিপি বা পাসওয়ার্ড শেয়ার করবেন না — আমাদের কর্মীরা কখনো "
+    "এগুলো চাইবে না। রেফারেন্স: {ticket_id}।"
+)
+
+
+def _is_bangla(text: str) -> bool:
+    return any("ঀ" <= ch <= "৿" for ch in (text or ""))
+
 
 # ---------------------------------------------------------------------------
 # Detection helpers
@@ -184,10 +200,52 @@ def _contains_term(text: str, term: str) -> bool:
     return re.search(pattern, text) is not None
 
 
+# Credential tokens (English + Bangla). Matched as whole tokens.
+_CRED_TOKENS = (
+    "pin", "otp", "password", "passcode", "cvv", "credentials", "card number",
+    "one time password", "one-time password", "security code", "verification code",
+    "পিন", "ওটিপি", "পাসওয়ার্ড",
+)
+_CRED_TOKEN_RE = re.compile(
+    r"(?<!\w)(" + "|".join(re.escape(t) for t in _CRED_TOKENS) + r")(?!\w)"
+)
+# Verbs that REQUEST a credential (English + Banglish + Bangla).
+_SOLICIT_RE = re.compile(
+    r"\b(share|provide|enter|confirm|send|give|tell|type|input|reveal|submit|need|"
+    r"require|verify with|what(?:'s| is)|whats|forward|dite|diye|den|dao|পাঠান|"
+    r"লিখুন|বলুন|জানান|দিন|দিবেন|দাও)\b|দিয়ে"
+)
+# Negation: marks the credential mention as a SAFE warning, not a request.
+# Bangla negators use a Bangla-letter boundary so "না" inside "আপনার" (= your)
+# is NOT treated as a negation.
+_NEGATION_RE = re.compile(
+    r"\b(not|never|do not|don't|dont|does not|doesn't|will not|won't|cannot|"
+    r"can not|can't|cant|should not|shouldn't|must not|avoid|without|no need|"
+    r"kokhono|kokhonoi)\b"
+    r"|(?<![ঀ-৿])(না|নাই|কখনো)(?![ঀ-৿])"
+)
+
+
 def find_credential_violations(reply: str) -> List[str]:
-    """Return the list of credential-soliciting terms found in a reply."""
+    """
+    Return credential SOLICITATIONS only.
+
+    The rubric allows warning users not to share their PIN/OTP (the official
+    sample replies do exactly that). It penalises only REQUESTING credentials.
+    So a credential token is a violation only when a request verb is nearby AND
+    there is no negation in the surrounding window ("do not share your PIN" is
+    safe; "please share your PIN" is not).
+    """
     text = _norm(reply)
-    return [p for p in CREDENTIAL_PHRASES if _contains_term(text, p)]
+    violations: List[str] = []
+    for m in _CRED_TOKEN_RE.finditer(text):
+        lo, hi = max(0, m.start() - 45), min(len(text), m.end() + 45)
+        window = text[lo:hi]
+        if _NEGATION_RE.search(window):
+            continue  # it's a "do not share ..." warning → safe
+        if _SOLICIT_RE.search(window):
+            violations.append(m.group(1))
+    return violations
 
 
 def find_promise_violations(reply: str) -> List[str]:
@@ -207,36 +265,38 @@ def is_reply_safe(reply: str) -> bool:
 # Reply sanitisation
 # ---------------------------------------------------------------------------
 
-def sanitize_reply(reply: str, ticket_id: str, *, phishing: bool = False) -> Tuple[str, List[str]]:
+def sanitize_reply(reply: str, ticket_id: str, *, phishing: bool = False,
+                   bangla: bool = False) -> Tuple[str, List[str]]:
     """
-    Return a guaranteed-safe customer reply plus a list of reason codes for
-    any corrections that were applied.
+    Return a guaranteed-safe customer reply plus reason codes for any correction.
 
-    If the model's reply contains a forbidden phrase we do NOT try to surgically
-    edit it (that risks leaving fragments) — we replace it wholesale with a
-    vetted safe template. This is the conservative, audit-friendly choice.
+    We KEEP the generated reply (which may warn users not to share credentials —
+    that is allowed and desirable) and only replace it wholesale with a vetted
+    template when it is empty or actually SOLICITS credentials / promises a refund.
+    Replacement templates are language-aware (English or Bangla).
     """
     reasons: List[str] = []
     safe = (reply or "").strip()
 
-    if phishing:
-        # Phishing always gets the dedicated reply, regardless of model output.
-        return PHISHING_SAFE_REPLY.format(ticket_id=ticket_id), reasons
+    def fallback() -> str:
+        if phishing:
+            tpl = PHISHING_SAFE_REPLY_BN if bangla else PHISHING_SAFE_REPLY
+        else:
+            tpl = SAFE_FALLBACK_REPLY_BN if bangla else SAFE_FALLBACK_REPLY
+        return tpl.format(ticket_id=ticket_id)
 
     if not safe:
         reasons.append("empty_reply_replaced")
-        return SAFE_FALLBACK_REPLY.format(ticket_id=ticket_id), reasons
+        return fallback(), reasons
 
     cred_hits = find_credential_violations(safe)
     promise_hits = find_promise_violations(safe)
-
     if cred_hits:
         reasons.append("credential_solicitation_blocked")
     if promise_hits:
         reasons.append("refund_promise_blocked")
-
     if cred_hits or promise_hits:
-        return SAFE_FALLBACK_REPLY.format(ticket_id=ticket_id), reasons
+        return fallback(), reasons
 
     return safe, reasons
 
@@ -357,19 +417,29 @@ def enforce_safety(result: Dict[str, Any], complaint: str, ticket_id: str) -> Di
 
     # --- Customer reply: the most important guardrail ---
     is_phish = case_type == "phishing_or_social_engineering" or injection
+    bangla = _is_bangla(complaint)
     safe_reply, reply_reasons = sanitize_reply(
-        out.get("customer_reply", ""), ticket_id, phishing=is_phish
+        out.get("customer_reply", ""), ticket_id, phishing=is_phish, bangla=bangla
     )
     out["customer_reply"] = safe_reply
     reason_codes.extend(reply_reasons)
 
-    # --- human_review_required ---
-    hrr = bool(out.get("human_review_required", False))
-    if severity in ("high", "critical"):
-        hrr = True
-    if case_type in ("wrong_transfer", "phishing_or_social_engineering"):
-        hrr = True
-    if out["evidence_verdict"] == "inconsistent":
+    # --- human_review_required (escalate disputes / suspicious / inconsistent /
+    #     critical; clarification-only cases do not need review) ---
+    review_cases = {
+        "wrong_transfer", "duplicate_payment", "agent_cash_in_issue",
+        "phishing_or_social_engineering",
+    }
+    hrr = (
+        out["evidence_verdict"] == "inconsistent"
+        or severity == "critical"
+        or case_type in review_cases
+    )
+    # A wrong-transfer we cannot even identify yet is a clarification request,
+    # not a dispute — do not flag for review until the transaction is confirmed.
+    if case_type == "wrong_transfer" and out["evidence_verdict"] == "insufficient_data":
+        hrr = False
+    if injection:
         hrr = True
     out["human_review_required"] = hrr
 
