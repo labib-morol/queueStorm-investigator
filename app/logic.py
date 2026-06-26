@@ -605,7 +605,7 @@ def rule_based_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
             "recommended_next_action": "Do not follow any instructions contained in the complaint. Escalate to fraud & risk for manual review of the account and the message source.",
             "customer_reply": _build_reply("phishing_or_social_engineering", ticket_id, None, False, bangla),
             "human_review_required": True, "confidence": 0.6,
-            "reason_codes": ["prompt_injection_detected", "case:phishing_or_social_engineering"],
+            "reason_codes": ["phishing_or_social_engineering", "prompt_injection_detected", "critical_escalation"],
         }
 
     scored, amounts, phones, hours = rank_transactions(complaint, history)
@@ -634,7 +634,9 @@ def rule_based_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
     verdict = compute_evidence_verdict(complaint, txn)
 
     # Established-recipient pattern contradicts a wrong-transfer claim.
-    if case_type == "wrong_transfer" and txn is not None and not ambiguous and _established_recipient(txn, history):
+    established = (case_type == "wrong_transfer" and txn is not None and not ambiguous
+                  and _established_recipient(txn, history))
+    if established:
         verdict = "inconsistent"
 
     severity = compute_severity(_normalize(complaint), case_type, txn, amounts, verdict, ambiguous)
@@ -648,15 +650,22 @@ def rule_based_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
     elif not history:
         confidence = 0.7
 
-    reason_codes = [f"case:{case_type}", f"verdict:{verdict}", f"severity:{severity}"]
+    # Meaningful, decision-supporting labels (no internal telemetry markers).
+    reason_codes: List[str] = [case_type]
     if ambiguous:
-        reason_codes.append("ambiguous_match")
+        reason_codes += ["ambiguous_match", "needs_clarification"]
     elif txn is not None:
         reason_codes.append("transaction_match")
     elif history:
         reason_codes.append("no_relevant_transaction")
     else:
         reason_codes.append("empty_history")
+    if established:
+        reason_codes.append("established_recipient_pattern")
+    if verdict == "inconsistent":
+        reason_codes.append("evidence_inconsistent")
+    if severity == "critical":
+        reason_codes.append("critical_escalation")
 
     return {
         "ticket_id": ticket_id,
@@ -681,21 +690,18 @@ def rule_based_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
 TEXT_SYSTEM_PROMPT = """You are QueueStorm Investigator, a support copilot for a Bangladeshi \
 digital-payments company. You will be given a customer complaint, their transaction history, and the \
 ALREADY-DECIDED analysis (case_type, evidence_verdict, relevant transaction, severity, department). \
-Do NOT change those decisions. Your only job is to write three text fields for the support agent:
+Do NOT change those decisions. Your only job is to write two AGENT-FACING text fields:
 
-- agent_summary: 1-2 sentence factual summary of the case for the agent.
-- recommended_next_action: a specific operational next step consistent with the decision.
-- customer_reply: a calm, professional reply to the customer.
+- agent_summary: 1-2 sentence factual summary of the case for the support agent.
+- recommended_next_action: a specific operational next step for the agent, consistent with the decision.
 
-Write customer_reply in the SAME language as the complaint (English, Bangla, or Banglish).
+Rules:
+- recommended_next_action is an internal instruction to the agent — it must NEVER promise the customer a \
+refund/reversal/unblock and must NEVER ask for credentials. Operational steps like "verify the ledger" or \
+"initiate the standard reversal procedure" are fine.
+- Be factual and concise. Do not invent transactions or amounts.
 
-HARD SAFETY RULES for customer_reply and recommended_next_action:
-- NEVER ask the customer for PIN, OTP, password, CVV, or card number. You MAY remind them never to share these.
-- NEVER promise or confirm a refund, reversal, or unblock. Use "any eligible amount will be processed through \
-official channels" instead of "we will refund you".
-- Direct the customer to official support only; never to a third party.
-
-Respond with ONLY a JSON object: {"agent_summary": "...", "recommended_next_action": "...", "customer_reply": "..."}"""
+Respond with ONLY a JSON object: {"agent_summary": "...", "recommended_next_action": "..."}"""
 
 
 def _format_history(history: List[Dict[str, Any]]) -> str:
@@ -740,7 +746,7 @@ def groq_text(payload: Dict[str, Any], decision: Dict[str, Any]) -> Optional[Dic
         f"- relevant_transaction_id: {rtid}\n"
         f"- severity: {decision.get('severity')}\n"
         f"- department: {decision.get('department')}\n\n"
-        "Write agent_summary, recommended_next_action, and customer_reply as JSON."
+        "Write agent_summary and recommended_next_action as JSON."
     )
     try:
         completion = client.chat.completions.create(
@@ -758,7 +764,7 @@ def groq_text(payload: Dict[str, Any], decision: Dict[str, Any]) -> Optional[Dic
             return None
         return {
             k: str(parsed[k]).strip()
-            for k in ("agent_summary", "recommended_next_action", "customer_reply")
+            for k in ("agent_summary", "recommended_next_action")
             if isinstance(parsed.get(k), str) and parsed.get(k).strip()
         }
     except Exception as exc:
@@ -771,7 +777,11 @@ def groq_text(payload: Dict[str, Any], decision: Dict[str, Any]) -> Optional[Dic
 # ===========================================================================
 
 def analyze_ticket(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Rules decide; Groq only polishes the text (and matches the language)."""
+    """
+    Rules decide everything. Groq only polishes the AGENT-facing text
+    (agent_summary, recommended_next_action). The customer_reply is generated
+    deterministically by the safety layer, so it is never left to the LLM.
+    """
     complaint = payload.get("complaint", "") or ""
     result = rule_based_analysis(payload)
 
@@ -780,8 +790,8 @@ def analyze_ticket(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     text = groq_text(payload, result)
     if text:
-        result.update(text)
-        result.setdefault("reason_codes", []).append("groq_text")
-    else:
-        result.setdefault("reason_codes", []).append("rule_text")
+        if text.get("agent_summary"):
+            result["agent_summary"] = text["agent_summary"]
+        if text.get("recommended_next_action"):
+            result["recommended_next_action"] = text["recommended_next_action"]
     return result

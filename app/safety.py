@@ -170,6 +170,95 @@ def _is_bangla(text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Department-aware customer reply (deterministic, team-attributed, safe)
+# ---------------------------------------------------------------------------
+# Actions are attributed to the named handling TEAM (not first-person "we will
+# do X"), positioning the service as a copilot that routes to a team — matching
+# the official sample replies ("Our dispute team will review the case").
+
+TEAM_EN: Dict[str, str] = {
+    "customer_support": "support team",
+    "dispute_resolution": "dispute resolution team",
+    "payments_ops": "payments operations team",
+    "merchant_operations": "merchant operations team",
+    "agent_operations": "agent operations team",
+    "fraud_risk": "fraud and risk team",
+}
+TEAM_BN: Dict[str, str] = {
+    "customer_support": "সাপোর্ট টিম",
+    "dispute_resolution": "ডিসপিউট রেজোলিউশন টিম",
+    "payments_ops": "পেমেন্টস অপারেশন্স টিম",
+    "merchant_operations": "মার্চেন্ট অপারেশন্স টিম",
+    "agent_operations": "এজেন্ট অপারেশন্স টিম",
+    "fraud_risk": "ফ্রড ও রিস্ক টিম",
+}
+
+
+def build_customer_reply(case_type: str, department: str, rtid: Optional[str],
+                         ticket_id: str, bangla: bool) -> str:
+    """Generate a safe, professional, team-attributed customer reply."""
+    if bangla:
+        team = TEAM_BN.get(department, "সাপোর্ট টিম")
+        about = f" (লেনদেন {rtid})" if rtid else ""
+        if case_type == "phishing_or_social_engineering":
+            return ("কোনো তথ্য শেয়ার করার আগে যোগাযোগ করার জন্য ধন্যবাদ। আমাদের ফ্রড ও রিস্ক টিম "
+                    "বিষয়টি পর্যালোচনা করছে। অনুগ্রহ করে আপনার পিন, ওটিপি বা পাসওয়ার্ড কারো সাথে শেয়ার "
+                    "করবেন না — আমাদের কোনো কর্মী কখনো এগুলো চাইবে না। শুধুমাত্র অফিসিয়াল সাপোর্ট চ্যানেলের "
+                    f"মাধ্যমে যোগাযোগ করা হবে। রেফারেন্স: {ticket_id}।")
+        if case_type == "other" or not rtid:
+            return ("যোগাযোগ করার জন্য ধন্যবাদ। সঠিক লেনদেনটি শনাক্ত করতে অনুগ্রহ করে লেনদেন আইডি, পরিমাণ "
+                    f"এবং আনুমানিক সময় জানান। এরপর আমাদের {team} বিষয়টি অফিসিয়াল চ্যানেলের মাধ্যমে যাচাই করবে। "
+                    f"নিরাপত্তার জন্য কারো সাথে আপনার পিন বা ওটিপি শেয়ার করবেন না। রেফারেন্স: {ticket_id}।")
+        if case_type == "refund_request":
+            return (f"যোগাযোগ করার জন্য ধন্যবাদ। সম্পন্ন পেমেন্টের রিফান্ড প্রযোজ্য নীতিমালার উপর নির্ভর করে। "
+                    f"আমাদের {team} আপনার অনুরোধটি যাচাই করবে এবং যেকোনো প্রযোজ্য পরিমাণ অফিসিয়াল চ্যানেলের "
+                    f"মাধ্যমে প্রক্রিয়া করা হবে। অনুগ্রহ করে কারো সাথে আপনার পিন বা ওটিপি শেয়ার করবেন না। "
+                    f"রেফারেন্স: {ticket_id}।")
+        return (f"আপনার অভিযোগটি{about} আমরা পেয়েছি। আমাদের {team} বিষয়টি যাচাই করবে এবং অফিসিয়াল সাপোর্ট "
+                "চ্যানেলের মাধ্যমে আপনাকে জানাবে। যেকোনো প্রযোজ্য পরিমাণ অফিসিয়াল চ্যানেলের মাধ্যমে প্রক্রিয়া "
+                f"করা হবে। নিরাপত্তার জন্য কারো সাথে আপনার পিন, ওটিপি বা পাসওয়ার্ড শেয়ার করবেন না। "
+                f"রেফারেন্স: {ticket_id}।")
+
+    team = TEAM_EN.get(department, "support team")
+    about = f" regarding transaction {rtid}" if rtid else ""
+    if case_type == "phishing_or_social_engineering":
+        return ("Thank you for reaching out before sharing any information. Our fraud and risk team is "
+                "reviewing this. Please never share your PIN, OTP, or password with anyone — our staff will "
+                "never ask for them. We will only contact you through official support channels. "
+                f"Reference: {ticket_id}.")
+    if case_type == "other" or not rtid:
+        return ("Thank you for reaching out. To identify the right transaction, please share the transaction "
+                f"ID, the amount involved, and the approximate time. Our {team} will then review your case "
+                "through official support channels. For your security, please do not share your PIN, OTP, or "
+                f"password with anyone. Reference: {ticket_id}.")
+    if case_type == "refund_request":
+        return ("Thank you for reaching out. Refund eligibility for completed payments depends on the "
+                f"applicable policy. Our {team} will review your request, and any eligible amount will be "
+                "processed through official channels. For your security, please do not share your PIN, OTP, or "
+                f"password with anyone. Reference: {ticket_id}.")
+    return (f"Thank you for reaching out. We have noted your concern{about}. Our {team} will review the case "
+            "and update you through our official support channels. Any eligible amount will be processed "
+            "through official channels once the review is complete. For your security, please do not share "
+            f"your PIN, OTP, or password with anyone. Reference: {ticket_id}.")
+
+
+def _default_action(case_type: str, rtid: Optional[str]) -> str:
+    """Safe operational next step (used if a model action makes a customer promise)."""
+    ref = f" {rtid}" if rtid else ""
+    actions = {
+        "wrong_transfer": f"Verify transaction{ref} with the customer and route to dispute resolution per the wrong-transfer workflow.",
+        "payment_failed": f"Investigate the ledger status of transaction{ref} with payments operations and follow the standard reversal procedure if applicable.",
+        "duplicate_payment": f"Verify the duplicate with payments operations and follow the reversal procedure for transaction{ref} if confirmed.",
+        "merchant_settlement_delay": f"Route to merchant operations to verify the settlement batch for transaction{ref}.",
+        "agent_cash_in_issue": f"Reconcile the agent cash-in transaction{ref} with agent operations.",
+        "phishing_or_social_engineering": "Escalate to fraud & risk and advise the customer to secure their account through official support.",
+        "refund_request": f"Route the refund request for transaction{ref} per policy without committing to an outcome.",
+        "other": "Request the transaction ID, amount, and time from the customer, then route accordingly.",
+    }
+    return actions.get(case_type, actions["other"])
+
+
+# ---------------------------------------------------------------------------
 # Detection helpers
 # ---------------------------------------------------------------------------
 
@@ -415,14 +504,19 @@ def enforce_safety(result: Dict[str, Any], complaint: str, ticket_id: str) -> Di
         "Review the complaint and transaction history, then follow standard procedure."
     )
 
-    # --- Customer reply: the most important guardrail ---
-    is_phish = case_type == "phishing_or_social_engineering" or injection
+    # --- Customer reply: generated deterministically here (the safety layer is
+    #     the single source of truth for the customer-facing reply). It is
+    #     team-attributed, language-aware, and provably safe. ---
     bangla = _is_bangla(complaint)
-    safe_reply, reply_reasons = sanitize_reply(
-        out.get("customer_reply", ""), ticket_id, phishing=is_phish, bangla=bangla
+    out["customer_reply"] = build_customer_reply(
+        case_type, out["department"], out["relevant_transaction_id"], ticket_id, bangla
     )
-    out["customer_reply"] = safe_reply
-    reason_codes.extend(reply_reasons)
+
+    # --- recommended_next_action is an agent instruction; it must not contain a
+    #     customer-facing promise (the -10 rule also checks this field). ---
+    if find_promise_violations(out.get("recommended_next_action", "")):
+        out["recommended_next_action"] = _default_action(case_type, out["relevant_transaction_id"])
+        reason_codes.append("action_promise_blocked")
 
     # --- human_review_required (escalate disputes / suspicious / inconsistent /
     #     critical; clarification-only cases do not need review) ---

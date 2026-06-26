@@ -55,11 +55,13 @@ POST /analyze-ticket
         │     amount/time/counterparty       case_type, severity, department,
         │     matching · disambiguation ·    human_review_required
         │     duplicate / established-recipient detection · EN/BN/Banglish
-        └─ Groq (llama-3.3-70b-versatile) → ONLY drafts the 3 text fields,
-              text-only, language-matched     replies in the customer's language
+        └─ Groq (llama-3.3-70b-versatile) → ONLY drafts the 2 agent-facing
+              text-only, optional               fields (summary + next action)
         │
         ▼
   app/safety.enforce_safety()  ── HARD guardrails, override everything, run LAST
+        │   · generates the customer_reply deterministically (team-attributed,
+        │     language-aware EN/BN) — never left to the LLM
         │
         ▼
    structured JSON (200)
@@ -230,8 +232,8 @@ refund, −10 third-party redirect) and the two-or-more-violations disqualifier.
 
 | Model | Where it runs | Why |
 |-------|---------------|-----|
-| **`llama-3.3-70b-versatile`** | Groq Cloud (external API) | Fast (~0.6–2s) drafting of `agent_summary`, `recommended_next_action`, and `customer_reply`, replying in the customer's language (English/Bangla/Banglish). Runs in strict JSON mode, `temperature=0.2`, 4s timeout. **Optional** — it only writes prose and **never changes a decision**. |
-| **Rule engine (no model)** | In-process, deterministic | Authoritative for every scored field: transaction matching, evidence verdict, classification, severity, routing, and all safety guardrails. Also the complete fallback (English + Bangla templates) when Groq is unavailable. |
+| **`llama-3.3-70b-versatile`** | Groq Cloud (external API) | Fast (~0.6–2s) drafting of the two **agent-facing** fields only — `agent_summary` and `recommended_next_action`. Strict JSON mode, `temperature=0.2`, 4s timeout. **Optional** — it never writes the customer reply and **never changes a decision**. |
+| **Rule engine (no model)** | In-process, deterministic | Authoritative for every scored field: transaction matching, evidence verdict, classification, severity, routing, and all safety guardrails. **Generates the `customer_reply` deterministically** (team-attributed, English + Bangla) so the customer-facing message is always consistent and safe. Also drafts the agent text when Groq is unavailable. |
 
 **Cost & runtime reasoning.** Groq is low-cost and very low-latency, keeping p95 well inside the
 ≤5s full-credit tier. Because the rule engine is a full fallback, the service has **no hard

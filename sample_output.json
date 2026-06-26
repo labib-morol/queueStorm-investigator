@@ -34,15 +34,12 @@
     "department": "dispute_resolution",
     "agent_summary": "Customer reports a wrong transfer issue (high severity). Matched transaction TXN-9101 (transfer, 5000 BDT to +8801719876543, status completed); evidence is consistent.",
     "recommended_next_action": "Verify transaction TXN-9101 with the customer and initiate the wrong-transfer dispute workflow per policy.",
-    "customer_reply": "Thank you for reaching out. We have noted your concern regarding transaction TXN-9101 and our team will investigate this matter. Any eligible amount will be processed through official channels once the review is complete. For your security, please do not share your PIN, OTP, or password with anyone. Reference: TKT-001.",
+    "customer_reply": "Thank you for reaching out. We have noted your concern regarding transaction TXN-9101. Our dispute resolution team will review the case and update you through our official support channels. Any eligible amount will be processed through official channels once the review is complete. For your security, please do not share your PIN, OTP, or password with anyone. Reference: TKT-001.",
     "human_review_required": true,
     "confidence": 0.95,
     "reason_codes": [
-      "case:wrong_transfer",
-      "verdict:consistent",
-      "severity:high",
-      "transaction_match",
-      "rule_text"
+      "wrong_transfer",
+      "transaction_match"
     ]
   }
 }
