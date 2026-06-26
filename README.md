@@ -18,6 +18,9 @@ It is a **copilot for human support agents**, not an autonomous financial decisi
 (`relevant_transaction_id`, `evidence_verdict`, `case_type`, `department`, `severity`,
 `human_review_required`), with **0 safety violations** and **p95 ≈ 0.8s** latency.
 
+**Tech stack:** Python 3.12 · FastAPI · Uvicorn · Pydantic · Groq (`llama-3.3-70b-versatile`,
+optional) · a deterministic in-house rule engine. No GPU, no local model weights, no database.
+
 ---
 
 ## 1. What it does (the investigator twist)
